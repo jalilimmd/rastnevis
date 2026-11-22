@@ -1,7 +1,7 @@
 /* Rastnevis service worker: network-first with an offline fallback.
  * Online visitors always get the latest deploy; the cache is only used when the network fails.
  * Bump CACHE_VERSION on every release so stale entries are dropped. */
-const CACHE_VERSION = 'rastnevis-1.0.0';
+const CACHE_VERSION = 'rastnevis-1.1.0';
 
 const PRECACHE = [
   './',
@@ -15,7 +15,7 @@ const PRECACHE = [
   './assets/icons/favicon.svg',
   './assets/icons/icon-192.png',
   './vendor/marked-12.0.2.min.js',
-  './vendor/purify-3.1.6.min.js',
+  './vendor/purify-3.4.17.min.js',
   './vendor/highlight-11.9.0.min.js',
 ];
 

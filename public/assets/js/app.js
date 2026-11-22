@@ -34,7 +34,37 @@
   /* ---------- libraries ---------- */
   const libsOk = !!(window.marked && window.DOMPurify);
   if (window.marked) marked.use({ gfm: true, breaks: false });
-  if (window.hljs) hljs.configure({ ignoreUnescapedHTML: true });
+
+  // highlight.js (~120 KB) loads only when the document has a fenced code block with a language.
+  const HLJS_SRC = 'vendor/highlight-11.9.0.min.js';
+  let hljsLoading = null;
+  function loadHljs() {
+    if (window.hljs) return Promise.resolve();
+    if (!hljsLoading) {
+      hljsLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = HLJS_SRC;
+        s.onload = () => resolve();
+        s.onerror = () => { hljsLoading = null; reject(new Error('highlight.js failed to load')); };
+        document.head.append(s);
+      });
+    }
+    return hljsLoading;
+  }
+  // Highlighted output is cached per (language, code), so typing elsewhere never re-highlights unchanged blocks.
+  const HL_MAX_CHARS = 60000;
+  const hlCache = new Map();
+  function highlight(code, lang) {
+    if (!window.hljs || code.length > HL_MAX_CHARS || !hljs.getLanguage(lang)) return null;
+    const key = lang + '\u0000' + code;
+    let html = hlCache.get(key);
+    if (html === undefined) {
+      try { html = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value; } catch (e) { html = null; }
+      hlCache.set(key, html);
+      if (hlCache.size > 300) hlCache.delete(hlCache.keys().next().value);
+    }
+    return html;
+  }
 
   const EMPTY_HTML =
     '<div class="empty">' +
@@ -65,6 +95,7 @@
   }
 
   function decorate(el) {
+    let needsHljs = false;
     el.querySelectorAll('a[href]').forEach((a) => {
       const h = a.getAttribute('href') || '';
       if (/^(https?:)?\/\//i.test(h)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
@@ -99,8 +130,13 @@
         const m = (code.className || '').match(/language-([\w+#.-]+)/);
         if (m) lang = m[1].toLowerCase();
       }
-      if (code && window.hljs && lang && hljs.getLanguage(lang)) {
-        try { hljs.highlightElement(code); } catch (e) { /* keep plain */ }
+      if (code && lang) {
+        if (window.hljs) {
+          const html = highlight(code.textContent, lang);
+          if (html !== null) { code.innerHTML = html; code.classList.add('hljs'); }
+        } else {
+          needsHljs = true;
+        }
       }
       const fig = document.createElement('figure');
       fig.className = 'codeblock';
@@ -135,6 +171,7 @@
     }
 
     if (prefs.digits) persianDigits(el);
+    if (needsHljs) loadHljs().then(render, () => { /* stay unhighlighted */ });
   }
 
   function faToken(tok) {
@@ -171,18 +208,31 @@
     const minutes = words ? Math.max(1, Math.ceil(words / 200)) : 0;
     $('#stats').textContent = `${fa(words)} واژه، ${fa(chars)} نویسه، ${fa(minutes)} دقیقه مطالعه`;
   }
+  // Larger documents wait longer between renders and saves, so typing stays smooth.
+  const delayFor = (small, medium, large) => {
+    const n = ed.value.length;
+    return n < 50000 ? small : n < 300000 ? medium : large;
+  };
   let saveTimer;
-  function scheduleSave() {
+  let savePending = false;
+  function saveNow() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      const ok = store.set(KEY_DOC, ed.value);
-      $('#save-state').textContent = ok ? 'در همین مرورگر ذخیره شد' : 'ذخیرهٔ خودکار در این مرورگر در دسترس نیست';
-    }, 350);
+    if (!savePending) return;
+    savePending = false;
+    const ok = store.set(KEY_DOC, ed.value);
+    $('#save-state').textContent = ok ? 'در همین مرورگر ذخیره شد' : 'ذخیرهٔ خودکار در این مرورگر در دسترس نیست';
   }
+  function scheduleSave() {
+    savePending = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, delayFor(400, 1200, 2500));
+  }
+  window.addEventListener('pagehide', saveNow);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   let renderTimer;
   function scheduleRender() {
     clearTimeout(renderTimer);
-    renderTimer = setTimeout(() => { render(); syncScroll(); }, 80);
+    renderTimer = setTimeout(() => { render(); syncScroll(); }, delayFor(80, 200, 450));
   }
   ed.addEventListener('input', () => { scheduleRender(); scheduleSave(); });
 
@@ -480,15 +530,40 @@
     '.md ul.task-list{list-style:none;padding-inline-start:.15em}.md li.task input{margin:0;margin-inline-end:.55em}',
     '.hljs-keyword,.hljs-literal,.hljs-section{color:#2149a8}.hljs-string,.hljs-regexp{color:#9a4b12}.hljs-number{color:#a8285f}.hljs-comment{color:#74878a}.hljs-title,.hljs-name{color:#0b6a85}.hljs-attr,.hljs-variable,.hljs-type{color:#6340b8}.hljs-built_in,.hljs-meta{color:#0d7a79}',
   ].join('\n');
+  // Exported files embed the site's own fonts, so they make no third-party requests and work offline.
+  const EXPORT_FONTS = [
+    { family: 'Vazirmatn', url: 'assets/fonts/Vazirmatn-33.0.3-wght.woff2', weight: '100 900', range: '' },
+    { family: 'JetBrains Mono', url: 'assets/fonts/JetBrainsMono-5.3.0-latin-wght.woff2', weight: '100 800', range: 'U+0000-00FF,U+2000-206F,U+2212' },
+  ];
+  let fontCss = '';
+  let fontCssLoading = null;
+  function loadFontCss() {
+    if (fontCss) return Promise.resolve(fontCss);
+    if (!fontCssLoading) {
+      const toDataUrl = (blob) => new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+      });
+      fontCssLoading = Promise.all(EXPORT_FONTS.map(async (f) => {
+        const res = await fetch(f.url);
+        if (!res.ok) throw new Error(f.url);
+        const data = String(await toDataUrl(await res.blob())).replace(/^data:[^;,]*/, 'data:font/woff2');
+        return `@font-face{font-family:"${f.family}";src:url(${data}) format("woff2");font-weight:${f.weight};font-display:swap;${f.range ? `unicode-range:${f.range};` : ''}}`;
+      })).then((rules) => { fontCss = rules.join('\n'); return fontCss; })
+        .catch(() => { fontCssLoading = null; return ''; });
+    }
+    return fontCssLoading;
+  }
   function standaloneHtml() {
     const c = exportClone();
     const h1 = c.querySelector('h1');
     const title = (h1 ? h1.textContent : 'سند').trim() || 'سند';
-    const css = EXPORT_CSS + (prefs.digits ? '\n.md ol{list-style-type:persian}' : '');
+    const css = (fontCss ? fontCss + '\n' : '') + EXPORT_CSS + (prefs.digits ? '\n.md ol{list-style-type:persian}' : '');
     return '<!doctype html>\n<html lang="fa" dir="rtl">\n<head>\n<meta charset="utf-8">\n' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
       `<title>${esc(title)}</title>\n` +
-      '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;800&family=JetBrains+Mono:wght@400;500&display=swap">\n' +
       `<style>\n${css}\n</style>\n</head>\n<body>\n<article class="md">\n${c.innerHTML}\n</article>\n</body>\n</html>\n`;
   }
   $('#copy-rich').addEventListener('click', copyRich);
@@ -521,8 +596,9 @@
   const exportMenu = $('#export-menu');
   const EXPORTS = {
     md: downloadMarkdown,
-    html: () => {
+    html: async () => {
       if (pv.dataset.empty) { toast('متنی برای ذخیره نیست.'); return; }
+      await loadFontCss();
       const name = baseName() + '.html';
       download(name, standaloneHtml(), 'text/html;charset=utf-8');
       toast(['ذخیره شد: ', bdi(name)]);
@@ -537,6 +613,7 @@
       window.print();
     },
   };
+  exportMenu.addEventListener('toggle', () => { if (exportMenu.open) loadFontCss(); });
   exportMenu.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', () => {
     exportMenu.open = false;
     EXPORTS[b.dataset.export]();

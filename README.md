@@ -55,8 +55,11 @@ rastnevis/
 ├── netlify.toml                # Netlify
 ├── vercel.json                 # Vercel (output dir + headers)
 ├── Dockerfile, nginx.conf      # Self-hosting with nginx (non-root, port 8080)
-├── scripts/check.sh            # Pre-deploy checks (also run in CI)
-├── scripts/update-vendor.sh    # Refresh libraries and fonts from npm
+├── .github/dependabot.yml      # Weekly updates for the pinned GitHub Actions
+├── scripts/check.sh            # Pre-deploy checks, incl. vendor checksums (also run in CI)
+├── scripts/update-vendor.sh    # Refresh libraries and fonts from npm, rewrite checksums
+├── scripts/vendor.sha256       # SHA-256 of every vendored library and font
+├── REVIEW.md                   # Security and performance review
 ├── LICENSE
 └── THIRD_PARTY_NOTICES.md
 ```
@@ -157,7 +160,9 @@ Shortcuts use physical key codes, so they also work with a Persian keyboard layo
 
 - No backend and no analytics. Text stays in the browser.
 - Everything is self-hosted: no Google Fonts or CDN requests. This also keeps the site working where those services are blocked or slow.
-- Rendered HTML is sanitized with DOMPurify; `<style>` tags are stripped and external links open with `rel="noopener noreferrer"`.
+- Rendered HTML is sanitized with DOMPurify 3.4.17; `<style>` tags are stripped and external links open with `rel="noopener noreferrer"`.
+- Exported and copied HTML embeds the site's own fonts, so those files make no third-party requests either.
+- Vendored files are checked against `scripts/vendor.sha256` on every deploy, and GitHub Actions are pinned to commit SHAs.
 - Content Security Policy: scripts, styles, fonts and workers from the same origin only. Images may load from any HTTPS URL so Markdown images work. Hosts that support headers (Netlify, Cloudflare Pages, Vercel, nginx) also send `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` and COOP.
 - The CSP is defined in four places; keep them identical: `public/index.html`, `public/_headers`, `vercel.json`, `nginx.conf`.
 
@@ -166,7 +171,7 @@ Shortcuts use physical key codes, so they also work with a Persian keyboard layo
 **Update libraries or fonts**
 
 ```bash
-MARKED=12.0.2 DOMPURIFY=3.1.6 HLJS=11.9.0 bash scripts/update-vendor.sh
+MARKED=12.0.2 DOMPURIFY=3.4.17 HLJS=11.9.0 bash scripts/update-vendor.sh
 bash scripts/check.sh
 ```
 

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 MARKED="${MARKED:-12.0.2}"
-DOMPURIFY="${DOMPURIFY:-3.1.6}"
+DOMPURIFY="${DOMPURIFY:-3.4.17}"
 HLJS="${HLJS:-11.9.0}"
 VAZIRMATN="${VAZIRMATN:-33.0.3}"
 JBMONO="${JBMONO:-5.3.0}"
@@ -59,7 +59,7 @@ cp "$VAZIR_DIR/OFL.txt"                                          "$FONTS/OFL-Vaz
 cp "$JB_DIR/LICENSE"                                             "$FONTS/OFL-JetBrainsMono.txt"
 
 # Point every reference at the new file names.
-for f in "$PUB/index.html" "$PUB/sw.js" "$PUB/assets/css/app.css"; do
+for f in "$PUB/index.html" "$PUB/sw.js" "$PUB/assets/css/app.css" "$PUB/assets/js/app.js"; do
   [ -f "$f" ] || continue
   sed -i.bak -E \
     -e "s#marked-[0-9][0-9A-Za-z.-]*\.min\.js#marked-$MARKED.min.js#g" \
@@ -71,7 +71,15 @@ for f in "$PUB/index.html" "$PUB/sw.js" "$PUB/assets/css/app.css"; do
   rm -f "$f.bak"
 done
 
+# Record checksums so scripts/check.sh can detect any later change to vendored files.
+(
+  cd "$PUB"
+  sha256sum vendor/*.min.js assets/fonts/*.woff2 > "$ROOT/scripts/vendor.sha256" 2>/dev/null ||
+    shasum -a 256 vendor/*.min.js assets/fonts/*.woff2 > "$ROOT/scripts/vendor.sha256"
+)
+
 echo "Done:"
 echo "  marked $MARKED, DOMPurify $DOMPURIFY, highlight.js $HLJS"
 echo "  Vazirmatn $VAZIRMATN, JetBrains Mono $JBMONO"
+echo "Checksums written to scripts/vendor.sha256."
 echo "Next: bump CACHE_VERSION in public/sw.js, then run scripts/check.sh"
