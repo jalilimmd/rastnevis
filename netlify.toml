@@ -1,0 +1,4 @@
+# Netlify: no build step. Response headers live in public/_headers.
+[build]
+  publish = "public"
+  command = ""
